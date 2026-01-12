@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity ^0.8.24;
 
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
@@ -25,7 +25,7 @@ contract BuildUsageFeeRegistry is Ownable, ReentrancyGuard {
     mapping(address => uint256) public accruedETH;
     mapping(uint256 => uint256) public usageCount;
 
-    constructor(address protocolTreasury_) {
+    constructor(address protocolTreasury_) Ownable(msg.sender) {
         require(protocolTreasury_ != address(0), "treasury=0");
         protocolTreasury = protocolTreasury_;
     }
@@ -42,13 +42,6 @@ contract BuildUsageFeeRegistry is Ownable, ReentrancyGuard {
         emit ProtocolTreasurySet(protocolTreasury_);
     }
 
-    /// @notice Called only by BuildNFT. Distributes OWNER_SLICE_PER_MINT across component owners.
-    /// Requirements:
-    /// - msg.value == 0.005 ether
-    /// - tokenIds strictly increasing
-    /// - counts > 0
-    /// - len > 0 and <= MAX_COMPONENTS
-    /// Remainder rule: remainder is credited to protocolTreasury.
     function accrueFromComposition(uint256[] calldata tokenIds, uint256[] calldata counts) external payable {
         require(msg.sender == buildNFT, "only BuildNFT");
         require(msg.value == OWNER_SLICE_PER_MINT, "bad msg.value");
@@ -59,7 +52,6 @@ contract BuildUsageFeeRegistry is Ownable, ReentrancyGuard {
         require(len <= MAX_COMPONENTS, "too many");
 
         uint256 totalCount = 0;
-
         for (uint256 i = 0; i < len; i++) {
             uint256 tokenId = tokenIds[i];
             uint256 c = counts[i];
