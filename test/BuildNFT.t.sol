@@ -3,58 +3,18 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {BuildNFT} from "src/BuildNFT.sol";
+import {Distributor} from "src/Distributor.sol";
 import {LicenseNFT} from "src/LicenseNFT.sol";
 import {LicenseRegistry} from "src/LicenseRegistry.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
-
-contract MockFeeRegistry {
-    event Accrued(uint256[] tokenIds, uint256[] counts, uint256 value);
-
-    BuildNFT public buildNFT;
-    address public treasury;
-    mapping(address => uint256) public accruedETH;
-
-    function setBuildNFT(address buildNFT_) external {
-        buildNFT = BuildNFT(buildNFT_);
-    }
-
-    function setTreasury(address treasury_) external {
-        treasury = treasury_;
-    }
-
-    function accrueFromComposition(
-        uint256[] calldata tokenIds,
-        uint256[] calldata counts
-    ) external payable {
-        uint256 totalCount;
-        for (uint256 i = 0; i < counts.length; i++) {
-            totalCount += counts[i];
-        }
-
-        uint256 remaining = msg.value;
-        for (uint256 i = 0; i < tokenIds.length; i++) {
-            address owner = buildNFT.ownerOf(tokenIds[i]);
-            uint256 share = (msg.value * counts[i]) / totalCount;
-            accruedETH[owner] += share;
-            remaining -= share;
-        }
-
-        if (remaining > 0) {
-            accruedETH[treasury] += remaining;
-        }
-
-        emit Accrued(tokenIds, counts, msg.value);
-    }
-}
 
 contract BuildNFTTest is Test {
     BuildNFT private buildNFT;
     LicenseNFT private licenseNFT;
     LicenseRegistry private licenseRegistry;
     ERC20Mock private blox;
-    MockFeeRegistry private feeRegistry;
+    Distributor private distributor;
 
-    address private rewardsPool = address(0x100);
     address private liquidityReceiver = address(0x200);
     address private protocolTreasury = address(0x300);
     address private alice = address(0xA11CE);
@@ -65,13 +25,12 @@ contract BuildNFTTest is Test {
         address predictedBuild = vm.computeCreateAddress(address(this), nonce + 4);
 
         blox = new ERC20Mock();
-        feeRegistry = new MockFeeRegistry();
+        distributor = new Distributor(address(blox), address(this));
         licenseNFT = new LicenseNFT("ipfs://licenses");
-        licenseRegistry = new LicenseRegistry(predictedBuild, address(licenseNFT));
+        licenseRegistry = new LicenseRegistry(predictedBuild, address(licenseNFT), protocolTreasury);
         buildNFT = new BuildNFT(
             address(blox),
-            rewardsPool,
-            address(feeRegistry),
+            address(distributor),
             liquidityReceiver,
             protocolTreasury,
             address(licenseRegistry),
@@ -79,9 +38,8 @@ contract BuildNFTTest is Test {
             1_000
         );
         licenseNFT.setRegistry(address(licenseRegistry));
-
-        feeRegistry.setBuildNFT(address(buildNFT));
-        feeRegistry.setTreasury(protocolTreasury);
+        distributor.setBuildNFT(address(buildNFT));
+        distributor.setProtocolTreasury(protocolTreasury);
 
         blox.mint(address(this), 2_000 ether);
         blox.transfer(alice, 1_000 ether);
@@ -176,8 +134,8 @@ contract BuildNFTTest is Test {
         uint256 fee = buildNFT.FEE_PER_MINT();
         uint256 liquidityBefore = liquidityReceiver.balance;
         uint256 treasuryBefore = protocolTreasury.balance;
-        uint256 bobAccruedBefore = feeRegistry.accruedETH(bob);
-        uint256 treasuryAccruedBefore = feeRegistry.accruedETH(protocolTreasury);
+        uint256 bobAccruedBefore = distributor.ethOwed(bob);
+        uint256 treasuryAccruedBefore = distributor.ethOwed(protocolTreasury);
 
         _mintAs(alice, keccak256("geo-fee-components"), 5, componentTokenIds, componentCounts);
 
@@ -187,7 +145,7 @@ contract BuildNFTTest is Test {
 
         assertEq(liquidityReceiver.balance, liquidityBefore + liquidityCut);
         assertEq(protocolTreasury.balance, treasuryBefore + treasuryCut);
-        assertEq(feeRegistry.accruedETH(bob), bobAccruedBefore + ownersCut);
-        assertEq(feeRegistry.accruedETH(protocolTreasury), treasuryAccruedBefore);
+        assertEq(distributor.ethOwed(bob), bobAccruedBefore + ownersCut);
+        assertEq(distributor.ethOwed(protocolTreasury), treasuryAccruedBefore);
     }
 }

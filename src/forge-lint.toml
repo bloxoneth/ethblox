@@ -1,0 +1,8 @@
+# forge-lint.toml
+
+[profile.default]
+ignored_errors = []
+
+[[profile.default.overrides]]
+paths = ["test/**"]
+ignored_errors = ["erc20-unchecked-transfer"]

@@ -11,8 +11,12 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import {IERC1155} from "openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 import {ERC1155Holder} from "openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-interface IFeeRegistry {
-    function accrueFromComposition(uint256[] calldata tokenIds, uint256[] calldata counts) external payable;
+interface IDistributor {
+    function accrueFromComposition(
+        uint256[] calldata buildIds,
+        uint256[] calldata counts,
+        address payer
+    ) external payable;
 }
 
 interface ILicenseRegistry {
@@ -20,7 +24,7 @@ interface ILicenseRegistry {
 }
 
 /// @notice Single ERC721 for both "bricks" and "builds" in MVP.
-/// Locks BLOX on mint, returns 90% on burn, recycles 10% to RewardsPool.
+/// Locks BLOX on mint, returns 90% on burn, recycles 10% to Distributor.
 /// geometryHash uniqueness is enforced while the build exists; once burned, the hash is reusable.
 contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155Holder {
     using SafeERC20 for IERC20;
@@ -44,7 +48,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         bytes32 indexed geometryHash,
         uint256 lockedBloxAmount,
         uint256 returnedToOwner,
-        uint256 recycledToRewardsPool
+        uint256 recycledToDistributor
     );
 
     // ==============================
@@ -66,8 +70,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
 
     IERC20 public immutable blox;
 
-    address public rewardsPool;
-    address public feeRegistry;
+    address public distributor;
     address public liquidityReceiver;
     address public protocolTreasury;
     address public licenseRegistry;
@@ -95,8 +98,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
 
     constructor(
         address blox_,
-        address rewardsPool_,
-        address feeRegistry_,
+        address distributor_,
         address liquidityReceiver_,
         address protocolTreasury_,
         address licenseRegistry_,
@@ -104,8 +106,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         uint256 maxMass_
     ) ERC721("ETHBLOX Build", "BUILD") Ownable(msg.sender) {
         require(blox_ != address(0), "BLOX=0");
-        require(rewardsPool_ != address(0), "rewards=0");
-        require(feeRegistry_ != address(0), "registry=0");
+        require(distributor_ != address(0), "distributor=0");
         require(liquidityReceiver_ != address(0), "liquidity=0");
         require(protocolTreasury_ != address(0), "treasury=0");
         require(licenseRegistry_ != address(0), "licenseRegistry=0");
@@ -114,8 +115,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         require(LIQUIDITY_BPS + TREASURY_BPS + OWNERS_BPS == 10_000, "bad bps");
 
         blox = IERC20(blox_);
-        rewardsPool = rewardsPool_;
-        feeRegistry = feeRegistry_;
+        distributor = distributor_;
         liquidityReceiver = liquidityReceiver_;
         protocolTreasury = protocolTreasury_;
         licenseRegistry = licenseRegistry_;
@@ -150,6 +150,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
                         "components not sorted"
                     );
                 }
+                require(componentCounts[i] > 0, "component=0");
 
                 uint256 licenseId = ILicenseRegistry(licenseRegistry)
                     .licenseIdForBuild(componentBuildIds[i]);
@@ -193,7 +194,11 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         if (componentBuildIds.length == 0) {
             _payETH(protocolTreasury, ownersAmt);
         } else {
-            IFeeRegistry(feeRegistry).accrueFromComposition{value: ownersAmt}(componentBuildIds, componentCounts);
+            IDistributor(distributor).accrueFromComposition{value: ownersAmt}(
+                componentBuildIds,
+                componentCounts,
+                msg.sender
+            );
         }
 
         emit BuildMinted(tokenId, msg.sender, mass, geometryHash, uri);
@@ -238,7 +243,7 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         }
 
         if (returned > 0) blox.safeTransfer(owner, returned);
-        if (recycled > 0) blox.safeTransfer(rewardsPool, recycled);
+        if (recycled > 0) blox.safeTransfer(distributor, recycled);
 
         emit BuildBurned(tokenId, owner, mass, gh, locked, returned, recycled);
     }
@@ -262,14 +267,9 @@ contract BuildNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard, ERC1155
         protocolTreasury = a;
     }
 
-    function setFeeRegistry(address a) external onlyOwner {
+    function setDistributor(address a) external onlyOwner {
         require(a != address(0), "0");
-        feeRegistry = a;
-    }
-
-    function setRewardsPool(address a) external onlyOwner {
-        require(a != address(0), "0");
-        rewardsPool = a;
+        distributor = a;
     }
 
     // ==============================

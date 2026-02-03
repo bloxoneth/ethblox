@@ -12,7 +12,7 @@ Key decisions:
 - Mint locks BLOX = mass * 1e18
 - Burn:
   - 90% BLOX returned to owner
-  - 10% sent to RewardsPool
+  - 10% sent to Distributor
 - No IPFS on-chain; tokenURI stored as string
 - Using OpenZeppelin v5 + Foundry
 
